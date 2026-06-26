@@ -1,0 +1,67 @@
+# Travis CI handles: Dependency Install, Unit Testing, Integration Testing
+# (LogChunks dataset is 100% Travis CI — npm ERR!, test FAIL, and panicked keywords)
+
+language: node_js
+node_js:
+  - "18"
+
+services:
+  - docker
+
+cache:
+  directories:
+    - node_modules
+
+env:
+  global:
+    - DB_HOST=localhost
+    - DB_USER=postgres
+    - DB_PASSWORD=password
+    - DB_NAME=aiops_db
+    - REDIS_URL=redis://localhost:6379
+
+before_install:
+  - docker run -d --name postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=password -e POSTGRES_DB=aiops_db -p 5432:5432 postgres:14
+  - docker run -d --name redis -p 6379:6379 redis:alpine
+  - sleep 5
+
+stages:
+  - name: dependencies
+    if: branch = main OR branch =~ /^chaos-run-/
+  - name: test
+    if: branch = main OR branch =~ /^chaos-run-/
+  - name: integration
+    if: branch = main OR branch =~ /^chaos-run-/
+
+jobs:
+  include:
+    # Stage 1: Dependency Install
+    - stage: dependencies
+      name: "Install & Verify Dependencies"
+      script:
+        - npm install
+        - npm ls
+        - node -e "require('./src/index'); console.log('Module resolution OK')"
+
+    # Stage 2: Unit Testing with Jest
+    - stage: test
+      name: "Unit Tests (Jest)"
+      install:
+        - npm install
+        - npm install --save-dev supertest
+      script:
+        - npm test -- --verbose --forceExit
+
+    # Stage 3: Integration Test (Docker Compose healthcheck)
+    - stage: integration
+      name: "Integration Test (Full Stack)"
+      before_script:
+        - docker-compose up -d
+        - sleep 10
+      script:
+        - curl -f http://localhost:3000/api/data || exit 1
+        - curl -f http://localhost:3000/api/users || exit 1
+        - curl -f http://localhost:3000/api/config || exit 1
+        - echo "All integration endpoints responding"
+      after_script:
+        - docker-compose down
